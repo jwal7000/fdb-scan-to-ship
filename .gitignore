@@ -1,0 +1,20 @@
+# Secrets
+.env
+gcp-key.json
+
+# Dependencies
+node_modules/
+
+# Local DB
+scans_local.sqlite
+
+# Logs
+logs/
+*.log
+
+# Backups
+*.bak.*
+*.bak
+
+# Binary
+cloud-sql-proxy

@@ -1,0 +1,16 @@
+{
+  "name": "scan-to-ship",
+  "version": "1.0.0",
+  "description": "Scan-to-ship confirmation app for Five Daughters Bakery kitchen tickets",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "mysql2": "^3.6.0",
+    "better-sqlite3": "^9.4.3",
+    "dotenv": "^16.3.1"
+  }
+}

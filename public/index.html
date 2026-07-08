@@ -1,0 +1,832 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
+  <link rel="manifest" href="/manifest.json">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="FDB Scan">
+  <meta name="theme-color" content="#f0a0b0">
+  <title>FDB Scan-to-Ship</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --pink:       #f0a0b0;
+      --pink-dark:  #e07888;
+      --pink-light: #fce8ed;
+      --pink-bg:    #fdf5f7;
+      --text:       #2a1a1f;
+      --text-light: #9a7a82;
+      --white:      #ffffff;
+      --border:     #f0dde2;
+      --shadow:     rgba(240,160,176,0.15);
+    }
+    body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--pink-bg); color: var(--text); min-height: 100vh; }
+    header { background: var(--white); border-bottom: 2px solid var(--pink-light); padding: 14px 20px; display: flex; align-items: center; gap: 14px; }
+    header img { width: 48px; height: 48px; object-fit: contain; }
+    header div { display: flex; flex-direction: column; }
+    header h1 { font-family: 'Playfair Display', serif; font-size: 1.1rem; font-weight: 700; color: var(--text); line-height: 1.2; }
+    header p { font-size: 0.7rem; font-weight: 500; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-light); margin-top: 1px; }
+    .mode-bar { background: var(--white); border-bottom: 1px solid var(--border); display: flex; padding: 0 16px; }
+    .mode-btn { flex: 1; padding: 13px 8px; border: none; background: none; font-size: 0.85rem; font-weight: 600; color: var(--text-light); cursor: pointer; border-bottom: 3px solid transparent; transition: all 0.15s; letter-spacing: 0.02em; }
+    .mode-btn.active { color: var(--pink-dark); border-bottom-color: var(--pink-dark); }
+    .container { padding: 16px; max-width: 480px; margin: 0 auto; }
+    .scan-card { background: var(--white); border-radius: 16px; padding: 20px; box-shadow: 0 2px 12px var(--shadow); margin-bottom: 16px; border: 1px solid var(--border); }
+    .scan-card label { display: block; font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-light); margin-bottom: 6px; }
+    .barcode-input { width: 100%; font-size: 1.3rem; font-weight: 600; padding: 12px 14px; border: 2px solid var(--border); border-radius: 10px; outline: none; transition: border-color 0.15s; letter-spacing: 0.05em; color: var(--text); background: var(--pink-bg); }
+    .barcode-input:focus { border-color: var(--pink); }
+    .barcode-input::placeholder { color: var(--text-light); font-size: 1rem; font-weight: 400; }
+    .ticket-preview { display: none; margin-top: 16px; padding: 16px; background: var(--pink-bg); border-radius: 8px; border-left: 4px solid var(--pink); }
+    .ticket-preview.visible { display: block; }
+    .ticket-preview .flavor { font-family: 'Playfair Display', serif; font-size: 1.2rem; font-weight: 700; margin-bottom: 4px; color: var(--text); }
+    .ticket-preview .location { font-size: 0.9rem; color: var(--text-light); margin-bottom: 12px; }
+    .ticket-preview .tray-row { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+    .ticket-preview .tray-label { font-size: 0.8rem; color: var(--text-light); flex-shrink: 0; }
+    .rack-badge { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 20px; font-size: 0.85rem; font-weight: 700; margin-bottom: 12px; }
+    .rack-badge .rack-icon { font-size: 1rem; }
+    .planned-badge { font-size: 0.8rem; color: var(--text-light); background: var(--pink-light); padding: 4px 10px; border-radius: 20px; font-weight: 500; }
+    .confirm-btn { width: 100%; padding: 15px; background: var(--pink); color: white; border: none; border-radius: 10px; font-size: 1rem; font-weight: 700; cursor: pointer; transition: background 0.15s; letter-spacing: 0.03em; }
+    .confirm-btn:hover { background: var(--pink-dark); }
+    .confirm-btn:disabled { background: #ddd; color: #aaa; cursor: not-allowed; }
+    .toast { display: none; margin-top: 12px; padding: 12px 14px; border-radius: 10px; font-size: 0.9rem; font-weight: 500; }
+    .toast.success { display: block; background: #e6f4ea; color: #2d7a3a; }
+    .toast.error   { display: block; background: #fdecea; color: #c0392b; }
+    .toast.warning { display: block; background: #fff3cd; color: #856404; }
+    .manual-toggle { width: 100%; margin-top: 14px; padding: 10px; background: none; border: 1px dashed var(--border); border-radius: 8px; font-size: 0.82rem; font-weight: 600; color: var(--text-light); cursor: pointer; letter-spacing: 0.02em; }
+    .manual-toggle:hover { border-color: var(--pink); color: var(--pink-dark); }
+    .manual-section { display: none; margin-top: 14px; padding: 14px; background: #faf7f4; border-radius: 10px; border: 1px solid var(--border); }
+    .manual-section.visible { display: block; }
+    .manual-select { width: 100%; padding: 11px 14px; border: 2px solid var(--border); border-radius: 10px; font-size: 0.95rem; font-weight: 600; background: var(--white); color: var(--text); outline: none; margin-bottom: 12px; appearance: none; }
+    .manual-select:focus { border-color: var(--pink); }
+    .flavor-btn { width: 100%; padding: 11px 14px; text-align: left; background: var(--white); border: 2px solid var(--border); border-radius: 8px; font-size: 0.9rem; font-weight: 600; cursor: pointer; margin-bottom: 6px; color: var(--text); transition: border-color 0.1s; }
+    .flavor-btn:hover, .flavor-btn.selected { border-color: var(--pink-dark); background: var(--pink-light); }
+    .offline-banner { display:none; background:#f59e0b; color:#fff; text-align:center; padding:8px 16px; font-size:0.85rem; font-weight:600; position:sticky; top:0; z-index:100; }
+  .offline-banner.visible { display:block; }
+  .offline-banner.syncing { background:#3b82f6; }
+  .recon-controls { display: flex; gap: 8px; margin-bottom: 12px; }
+    .recon-controls input { flex: 1; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; font-size: 0.9rem; outline: none; background: var(--pink-bg); }
+    .recon-controls button { padding: 10px 16px; background: var(--pink); color: white; border: none; border-radius: 10px; font-size: 0.9rem; font-weight: 600; cursor: pointer; }
+    .recon-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; table-layout: fixed; }
+    .recon-table th { background: var(--pink-light); padding: 7px 6px; text-align: center; font-weight: 600; font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-light); }
+    .recon-table th:first-child { text-align: left; width: 28%; }
+    .recon-table td { padding: 10px 6px; border-bottom: 1px solid var(--border); text-align: center; font-size: 0.82rem; }
+    .recon-table td:first-child { text-align: left; font-size: 0.8rem; word-break: break-word; }
+    .recon-table tr:last-child td { border-bottom: none; }
+    .gap-warn { color: #c0392b; font-weight: 600; }
+    .gap-ok   { color: #2d7a3a; }
+    .scan-list { list-style: none; }
+    .scan-item { padding: 12px 0; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+    .scan-item:last-child { border-bottom: none; }
+    .scan-item .info { flex: 1; }
+    .scan-item .name { font-weight: 600; font-size: 0.9rem; }
+    .scan-item .meta { font-size: 0.78rem; color: var(--text-light); margin-top: 2px; }
+    .scan-item .trays { font-size: 0.85rem; font-weight: 600; text-align: right; }
+    .badge { display: inline-block; font-size: 0.65rem; font-weight: 700; padding: 2px 8px; border-radius: 20px; text-transform: uppercase; }
+    .badge-shipped  { background: var(--pink-light); color: var(--pink-dark); }
+    .badge-received { background: #e6f4ea; color: #2d7a3a; }
+    .empty-state { text-align: center; color: var(--text-light); font-size: 0.9rem; padding: 24px 0; }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+    #manualFlavorList { max-height: 260px; overflow-y: auto; }
+  </style>
+</head>
+<body>
+
+<header>
+  <img src="/fdb-logo.jpg" alt="Five Daughters Bakery" />
+  <div>
+    <h1>Five Daughters Bakery</h1>
+    <p>Scan-to-Ship</p>
+  </div>
+</header>
+<div id="userBar" style="background:#fff;border-bottom:1px solid #f0dde2;padding:6px 20px;display:flex;align-items:center;justify-content:flex-end;gap:10px;font-size:0.8rem;">
+  <span style="color:#9a7a82;">Signed in as</span>
+  <strong id="userDisplay" style="color:#2a1a1f;"></strong>
+  <button onclick="changeUser()" style="background:none;border:1px solid #f0dde2;border-radius:6px;padding:3px 10px;font-size:0.78rem;font-weight:600;color:#e07888;cursor:pointer;">Change</button>
+</div>
+
+<div class="mode-bar">
+  <button class="mode-btn active" onclick="switchTab('scan')">Scan</button>
+  <button class="mode-btn" onclick="switchTab('recent')">Recent</button>
+  <button class="mode-btn" onclick="switchTab('recon')">Reconcile</button>
+</div>
+
+<div class="container">
+
+  <!-- SCAN TAB -->
+  <div class="tab-panel active" id="tab-scan">
+    <div class="scan-card">
+
+      <!-- Scan type toggle -->
+      <label>Scan Type</label>
+      <div style="display:flex;gap:8px;margin-bottom:16px;">
+        <button class="mode-btn active" id="btn-shipped"
+          style="border:2px solid var(--pink);border-radius:10px;flex:1;padding:10px;font-weight:600;"
+          onclick="setScanType('shipped')">🚚 Shipped</button>
+        <button class="mode-btn" id="btn-received"
+          style="border:2px solid var(--border);border-radius:10px;flex:1;padding:10px;font-weight:600;"
+          onclick="setScanType('received')">🏪 Received</button>
+      </div>
+
+      <!-- Location selector (Received mode only) -->
+      <div id="locationRow" style="display:none;margin-bottom:16px;">
+        <label>Your Location</label>
+        <select id="locationSelect" class="manual-select">
+          <option value="">— Select your store —</option>
+          <option>12th South</option>
+          <option>5th &amp; Broad</option>
+          <option>Avalon</option>
+          <option>East</option>
+          <option>L&amp;L Market</option>
+          <option>Ponce City Market</option>
+          <option>The Factory</option>
+          <option>The Fountains</option>
+          <option>The Gulch</option>
+          <option>Westside Provisions</option>
+        </select>
+      </div>
+
+      <!-- Date selector -->
+      <label>Delivering On</label>
+      <input type="date" id="dateCustom" onchange="setDate()"
+        style="width:100%;padding:11px 14px;font-size:0.95rem;font-weight:600;border:2px solid var(--pink);border-radius:10px;background:var(--pink-bg);color:var(--text);outline:none;margin-bottom:16px;display:block;" />
+
+      <!-- Barcode input (scanner mode) -->
+      <div id="scannerSection">
+        <label>Scan Barcode</label>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <input type="text" id="barcodeInput" class="barcode-input"
+            placeholder="Scan ticket barcode" autofocus inputmode="text" style="flex:1;" />
+          <button onclick="clearScan()" title="Clear"
+            style="padding:12px 16px;background:var(--border);color:var(--text-light);border:none;border-radius:10px;font-size:1rem;font-weight:600;cursor:pointer;flex-shrink:0;">✕</button>
+        </div>
+      </div>
+
+      <!-- Ticket preview (shared by scanner + manual) -->
+      <div class="ticket-preview" id="ticketPreview">
+        <div class="flavor" id="previewFlavor">—</div>
+        <div class="location" id="previewLocation">—</div>
+        <div id="rackBadge" style="display:none;margin-bottom:12px;"></div>
+        <div class="tray-row">
+          <span class="tray-label">Actual trays:</span>
+          <span class="planned-badge" id="plannedBadge">Planned: —</span>
+        </div>
+        <div id="trayBtns" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;"></div>
+        <input type="hidden" id="actualTrays" value="0" />
+        <button class="confirm-btn" id="confirmBtn" onclick="confirmScan()">✓ Confirm Scan</button>
+      </div>
+
+      <!-- Manual entry toggle -->
+      <button class="manual-toggle" id="manualToggle" onclick="toggleManual()">
+        ✏️ No barcode? Enter manually
+      </button>
+
+      <!-- Manual entry section -->
+      <div class="manual-section" id="manualSection">
+        <label style="margin-bottom:8px;">Location</label>
+        <select id="manualLocation" class="manual-select" onchange="loadFlavorsForManual()">
+          <option value="">— Select location —</option>
+        </select>
+        <label style="margin-bottom:8px;">Flavor</label>
+        <div id="manualFlavorList">
+          <p style="color:var(--text-light);font-size:0.85rem;padding:8px 0;">Select a location first.</p>
+        </div>
+      </div>
+
+      <div class="toast" id="toast"></div>
+    </div>
+  </div>
+
+  <!-- RECENT TAB -->
+  <div class="tab-panel" id="tab-recent">
+    <div class="scan-card">
+      <label>Recent Scans</label>
+      <ul class="scan-list" id="recentList">
+        <li class="empty-state">Loading…</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- RECONCILIATION TAB -->
+  <div class="tab-panel" id="tab-recon">
+    <div class="scan-card">
+      <label>Date</label>
+      <div class="recon-controls">
+        <input type="date" id="reconDate" />
+        <button onclick="loadRecon()">Load</button>
+      </div>
+      <div id="reconResult">
+        <p class="empty-state">Select a date and tap Load.</p>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  let currentScanType = 'shipped';
+  let currentTicket   = null;
+  let manualMode      = false;
+  let selectedDate    = defaultDate();
+
+  // ── Store colors ─────────────────────────────────────────
+  const STORE_COLORS = {
+    '12th South':           '#f9a8d4',
+    '5th & Broad':          '#94a3b8',
+    'Avalon':               '#22d3ee',
+    'East':                 '#3b82f6',
+    'L&L Market':           '#fde047',
+    'Ponce City Market':    '#c4b5fd',
+    'The Factory':          '#6ee7b7',
+    'The Fountains':        '#fda4af',
+    'The Gulch':            '#b45309',
+    'Westside Provisions':  '#f97316',
+  };
+  function storeColor(loc) {
+    return STORE_COLORS[loc] || '#e9a8c0';
+  }
+
+  function today() {
+    return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' });
+  }
+
+  function defaultDate() {
+    const cdt = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Chicago' }));
+    if (cdt.getHours() >= 12) cdt.setDate(cdt.getDate() + 1);
+    const y = cdt.getFullYear();
+    const m = String(cdt.getMonth() + 1).padStart(2, '0');
+    const d = String(cdt.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+
+  // ── Init ──────────────────────────────────────────────────
+  document.getElementById('reconDate').value  = defaultDate();
+  document.getElementById('dateCustom').value = defaultDate();
+  document.getElementById('barcodeInput').focus();
+  async function changeUser() {
+    const current = localStorage.getItem('scanned_by') || '';
+    const name = await fdbPrompt('Enter your name or ID:', current);
+    if (name !== null && name.trim()) {
+      localStorage.setItem('scanned_by', name.trim());
+      document.getElementById('userDisplay').textContent = name.trim();
+    }
+  }
+
+  async function initUser() {
+    let name = localStorage.getItem('scanned_by');
+    if (!name) {
+      name = await fdbPrompt('Your name or ID (for scan records):');
+      if (name && name.trim()) {
+        localStorage.setItem('scanned_by', name.trim());
+        name = name.trim();
+      }
+    }
+    const el = document.getElementById('userDisplay');
+    if (el) el.textContent = name || 'unknown';
+  }
+  initUser();
+  // Restore saved location
+  const savedLoc = localStorage.getItem('store_location');
+  if (savedLoc) document.getElementById('locationSelect').value = savedLoc;
+  document.getElementById('locationSelect').addEventListener('change', e => {
+    localStorage.setItem('store_location', e.target.value);
+  });
+
+  function setDate() {
+    selectedDate = document.getElementById('dateCustom').value || today();
+    hidePreview();
+    clearToast();
+    if (manualMode) loadLocationsForManual();
+  }
+
+  // ── Tabs ──────────────────────────────────────────────────
+  function switchTab(name) {
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById('tab-' + name).classList.add('active');
+    event.currentTarget.classList.add('active');
+    if (name === 'recent') loadRecent();
+    if (name === 'scan' && !manualMode) document.getElementById('barcodeInput').focus();
+    if (name === 'recon') {
+      const d = document.getElementById('reconDate');
+      if (!d.value) d.value = today();
+    }
+  }
+
+  // ── Scan type ─────────────────────────────────────────────
+  function setScanType(type) {
+    currentScanType = type;
+    const s = document.getElementById('btn-shipped');
+    const r = document.getElementById('btn-received');
+    const locationRow = document.getElementById('locationRow');
+    const pink   = getComputedStyle(document.documentElement).getPropertyValue('--pink').trim();
+    const border = getComputedStyle(document.documentElement).getPropertyValue('--border').trim();
+    if (type === 'shipped') {
+      s.style.borderColor = pink;   s.classList.add('active');
+      r.style.borderColor = border; r.classList.remove('active');
+      locationRow.style.display = 'none';
+    } else {
+      r.style.borderColor = pink;   r.classList.add('active');
+      s.style.borderColor = border; s.classList.remove('active');
+      locationRow.style.display = 'block';
+      if (savedLoc) document.getElementById('locationSelect').value = savedLoc;
+    }
+    hidePreview();
+    clearToast();
+  }
+
+  // ── Manual entry toggle ───────────────────────────────────
+  function toggleManual() {
+    manualMode = !manualMode;
+    const toggleBtn   = document.getElementById('manualToggle');
+    const manualSec   = document.getElementById('manualSection');
+    const scannerSec  = document.getElementById('scannerSection');
+
+    if (manualMode) {
+      manualSec.classList.add('visible');
+      scannerSec.style.display = 'none';
+      toggleBtn.textContent = '📷 Use scanner instead';
+      loadLocationsForManual();
+    } else {
+      manualSec.classList.remove('visible');
+      scannerSec.style.display = 'block';
+      toggleBtn.textContent = '✏️ No barcode? Enter manually';
+      hidePreview();
+      clearToast();
+      setTimeout(() => document.getElementById('barcodeInput').focus(), 50);
+    }
+  }
+
+  async function loadLocationsForManual() {
+    const sel = document.getElementById('manualLocation');
+    const flavorDiv = document.getElementById('manualFlavorList');
+    sel.innerHTML = '<option value="">Loading…</option>';
+    flavorDiv.innerHTML = '<p style="color:var(--text-light);font-size:0.85rem;padding:8px 0;">Select a location first.</p>';
+    hidePreview();
+    try {
+      const res = await fetch(`/tickets?date=${selectedDate}`);
+      const data = await res.json();
+      const locations = [...new Set((data.tickets || []).map(t => t.location))].sort();
+      sel.innerHTML = '<option value="">— Select location —</option>';
+      locations.forEach(loc => {
+        const opt = document.createElement('option');
+        opt.value = opt.textContent = loc;
+        sel.appendChild(opt);
+      });
+    } catch (e) {
+      sel.innerHTML = '<option value="">Error loading</option>';
+    }
+  }
+
+  async function loadFlavorsForManual() {
+    const location = document.getElementById('manualLocation').value;
+    const flavorDiv = document.getElementById('manualFlavorList');
+    if (!location) {
+      flavorDiv.innerHTML = '<p style="color:var(--text-light);font-size:0.85rem;padding:8px 0;">Select a location first.</p>';
+      hidePreview(); return;
+    }
+    flavorDiv.innerHTML = '<p style="color:var(--text-light);font-size:0.85rem;padding:8px 0;">Loading…</p>';
+    hidePreview();
+    try {
+      const res = await fetch(`/tickets?date=${selectedDate}&location=${encodeURIComponent(location)}`);
+      const data = await res.json();
+      const tickets = data.tickets || [];
+      if (!tickets.length) {
+        flavorDiv.innerHTML = '<p style="color:var(--text-light);font-size:0.85rem;padding:8px 0;">No tickets for this location.</p>';
+        return;
+      }
+      flavorDiv.innerHTML = '';
+      tickets.forEach(t => {
+        const btn = document.createElement('button');
+        btn.className = 'flavor-btn';
+        btn.innerHTML = `<strong>${t.item_name}</strong><span style="float:right;color:var(--text-light);font-size:0.8rem;">${t.planned_trays} trays</span>`;
+        btn.onclick = () => selectManualFlavor(t, btn);
+        flavorDiv.appendChild(btn);
+      });
+    } catch (e) {
+      flavorDiv.innerHTML = '<p style="color:var(--text-light);font-size:0.85rem;padding:8px 0;">Error loading flavors.</p>';
+    }
+  }
+
+  function selectManualFlavor(ticket, btn) {
+    document.querySelectorAll('.flavor-btn').forEach(b => b.classList.remove('selected'));
+    btn.classList.add('selected');
+    currentTicket = ticket;
+    const planned = parseFloat(ticket.planned_trays);
+    showRackBadge(null);
+      document.getElementById('previewFlavor').textContent   = ticket.item_name;
+    document.getElementById('previewLocation').textContent = ticket.location + ' · ' + ticket.forecast_date;
+    document.getElementById('plannedBadge').textContent    = `Planned: ${ticket.planned_trays} trays`;
+    buildTrayButtons(planned, planned);
+    document.getElementById('ticketPreview').classList.add('visible');
+    document.getElementById('ticketPreview').style.borderLeftColor = storeColor(ticket.location);
+    clearToast();
+  }
+
+  // ── Barcode input ─────────────────────────────────────────
+  const barcodeInput = document.getElementById('barcodeInput');
+  let lookupTimer;
+
+  barcodeInput.addEventListener('input', () => {
+    clearTimeout(lookupTimer);
+    const val = barcodeInput.value.trim();
+    if (!val) { hidePreview(); return; }
+    lookupTimer = setTimeout(() => lookupTicket(val), 300);
+  });
+  barcodeInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      clearTimeout(lookupTimer);
+      const val = barcodeInput.value.trim();
+      if (val) lookupTicket(val);
+    }
+  });
+
+  async function lookupTicket(barcode) {
+    try {
+      const res = await fetch(`/ticket/${encodeURIComponent(barcode)}?date=${selectedDate}`);
+      const data = await res.json();
+      if (!res.ok) { showToast(data.error || 'Ticket not found', 'error'); hidePreview(); return; }
+      currentTicket = data.ticket;
+      currentBarcode = barcode;
+      const planned = parseFloat(data.ticket.planned_trays);
+      document.getElementById('previewFlavor').textContent   = data.ticket.item_name;
+      document.getElementById('previewLocation').textContent = data.ticket.location + ' · ' + data.ticket.forecast_date;
+      showRackBadge(data.rackPosition || null);
+      document.getElementById('plannedBadge').textContent    = `Planned: ${data.ticket.planned_trays} trays`
+        + (data.ticket.planned_units ? ` (${data.ticket.planned_units} units)` : '');
+      const _bcParts = barcode.split('-');
+      const _bcTrays = _bcParts.length === 5 ? parseFloat(_bcParts[3])
+                       : _bcParts.length >= 3  ? parseFloat(_bcParts[2]) : NaN;
+      buildTrayButtons(planned, (!isNaN(_bcTrays) && _bcTrays > 0) ? _bcTrays : planned);
+      document.getElementById('ticketPreview').classList.add('visible');
+      document.getElementById('ticketPreview').style.borderLeftColor = storeColor(data.ticket.location);
+      clearToast();
+    } catch (err) {
+      showToast('Network error — is the server running?', 'error');
+    }
+  }
+
+  function hidePreview() {
+    currentTicket = null;
+    currentBarcode = null;
+    document.getElementById('ticketPreview').classList.remove('visible');
+    document.getElementById('ticketPreview').style.borderLeftColor = '';
+    document.getElementById('trayBtns').innerHTML = '';
+  }
+
+  function buildTrayButtons(planned, selected) {
+    const steps = [0.25, 0.5, 0.75, 1.0];
+    const container = document.getElementById('trayBtns');
+    container.innerHTML = '';
+    steps.forEach(v => {
+      const btn = document.createElement('button');
+      const isSelected = v === (selected || planned);
+      btn.textContent = v % 1 === 0 ? v.toFixed(0) : v;
+      btn.style.cssText = `
+        flex: 1; min-width: 60px; padding: 12px 8px;
+        font-size: 1rem; font-weight: 700;
+        border: 2px solid ${isSelected ? '#5a3e2b' : '#e0e0e0'};
+        background: ${isSelected ? '#5a3e2b' : 'white'};
+        color: ${isSelected ? 'white' : '#1a1a1a'};
+        border-radius: 8px; cursor: pointer;
+      `;
+      btn.onclick = () => selectTray(v, planned);
+      container.appendChild(btn);
+    });
+    document.getElementById('actualTrays').value = selected || planned;
+  }
+
+  function selectTray(value, planned) {
+    document.getElementById('actualTrays').value = value;
+    document.getElementById('trayBtns').querySelectorAll('button').forEach(btn => {
+      const v = parseFloat(btn.textContent);
+      const sel = v === value;
+      btn.style.background   = sel ? '#5a3e2b' : 'white';
+      btn.style.color        = sel ? 'white'   : '#1a1a1a';
+      btn.style.borderColor  = sel ? '#5a3e2b' : '#e0e0e0';
+    });
+  }
+
+  // ── Confirm scan ──────────────────────────────────────────
+  async function confirmScan() {
+    if (!currentTicket) return;
+    const btn = document.getElementById('confirmBtn');
+    const actualTrays = parseFloat(document.getElementById('actualTrays').value);
+    if (isNaN(actualTrays) || actualTrays < 0) { showToast('Enter a valid tray count', 'error'); return; }
+
+    if (currentScanType === 'received') {
+      const selectedLocation = document.getElementById('locationSelect').value;
+      if (!selectedLocation) { showToast('Select your store location before confirming', 'error'); return; }
+      if (currentTicket.location !== selectedLocation) {
+        const proceed = await fdbConfirm(
+          `⚠️ Location mismatch!\nTicket is for: ${currentTicket.location}\nYour store: ${selectedLocation}\n\nConfirm anyway?`
+        );
+        if (!proceed) return;
+      }
+    }
+
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+
+    try {
+      const res = await fetch('/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          barcode:      currentBarcode || currentTicket.id,
+          actual_trays: actualTrays,
+          scan_type:    currentScanType,
+          scan_date:    selectedDate,
+          scanned_by:   localStorage.getItem('scanned_by') || 'unknown',
+          device_id:    currentScanType === 'received'
+                          ? (document.getElementById('locationSelect').value || null)
+                          : 'kitchen',
+        }),
+      });
+      const data = await res.json();
+
+      if (res.status === 409) {
+        // Duplicate — show orange warning but don't block
+        showToast('⚠️ ' + (data.error || 'Duplicate scan — already recorded'), 'warning');
+        btn.disabled = false;
+        btn.textContent = '✓ Confirm Scan';
+        return;
+      }
+      if (!res.ok) { showToast(data.error || 'Save failed', 'error'); return; }
+
+      const backend = data.backend === 'sqlite' ? ' (local only)' : '';
+      if (data.warning) {
+        showToast('⚠️ Saved — ' + data.warning + backend, 'warning');
+      } else {
+        showToast(
+          `✓ ${currentScanType === 'shipped' ? 'Shipped' : 'Received'}: ${currentTicket.item_name} → ${currentTicket.location} · ${actualTrays} trays${backend}`,
+          'success'
+        );
+      }
+
+      // Reset for next scan
+      if (!manualMode) {
+        barcodeInput.value = '';
+        hidePreview();
+        barcodeInput.focus();
+      } else {
+        // In manual mode, deselect flavor but keep location loaded
+        hidePreview();
+        document.querySelectorAll('.flavor-btn').forEach(b => b.classList.remove('selected'));
+      }
+    } catch (err) {
+      showToast('Network error', 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '✓ Confirm Scan';
+    }
+  }
+
+  // ── Delete scan ──────────────────────────────────────────────
+  async function deleteScan(id) {
+    if (!confirm('Delete this scan? This cannot be undone.')) return;
+    try {
+      const res = await fetch(`/scan/${id}`, { method: 'DELETE' });
+      if (!res.ok) { showToast('Failed to delete scan', 'error'); return; }
+      showToast('Scan deleted', 'success');
+      loadRecent();
+    } catch (err) {
+      showToast('Network error', 'error');
+    }
+  }
+
+  // ── Recent scans ──────────────────────────────────────────
+  async function loadRecent() {
+    const list = document.getElementById('recentList');
+    list.innerHTML = '<li class="empty-state">Loading…</li>';
+    try {
+      const res  = await fetch('/scans/recent?limit=30');
+      const data = await res.json();
+      if (!data.scans.length) { list.innerHTML = '<li class="empty-state">No scans yet.</li>'; return; }
+      // Compute cumulative shipped trays per sku+location+date
+      const _totals = {};
+      for (const s of data.scans) {
+        if (s.scan_type !== 'shipped') continue;
+        const k = `${s.sku}|${s.location}|${s.forecast_date}`;
+        _totals[k] = (_totals[k] || 0) + parseFloat(s.actual_trays || 0);
+      }
+
+      list.innerHTML = data.scans.map(s => {
+        const actual     = parseFloat(s.actual_trays);
+        const planned    = parseFloat(s.planned_trays);
+        const key        = `${s.sku}|${s.location}|${s.forecast_date}`;
+        const cumulative = s.scan_type === 'shipped' ? Math.round((_totals[key] || actual) * 100) / 100 : actual;
+        const mismatch   = s.scan_type === 'shipped' && !isNaN(planned) && Math.abs(cumulative - planned) > 0.001;
+        const diff       = Math.round((cumulative - planned) * 100) / 100;
+        const diffStr    = diff > 0 ? `+${diff}` : `${diff}`;
+        const over       = diff > 0;
+        const mismatchBg = over ? '#f0fff4' : '#fff5f5';
+        const mismatchClr = over ? '#27ae60' : '#c0392b';
+        const mismatchIcon = '⚠️ ';
+        return `
+        <li class="scan-item" style="border-left:4px solid ${storeColor(s.location)};padding-left:10px;${mismatch ? `background:${mismatchBg};border-radius:8px;padding:12px;margin-bottom:4px;` : ''}">
+          <div class="info">
+            <div class="name">${mismatch ? mismatchIcon : ''}<strong>${s.sku}</strong>${s.item_name ? ' · ' + s.item_name : ''} · ${s.location}</div>
+            <div class="meta">${s.forecast_date} · ${s.scanned_by || 'unknown'}</div>
+            ${mismatch ? `<div style="font-size:0.78rem;color:${mismatchClr};margin-top:3px;font-weight:600;">Expected ${planned} · Total so far ${cumulative} (${diffStr})</div>` : ''}
+          </div>
+          <div class="trays" style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
+            ${actual} trays<br>
+            <span class="badge badge-${s.scan_type}">${s.scan_type}</span>
+            <button onclick="deleteScan(${s.id})" title="Delete scan" style="
+              margin-top:4px;background:none;border:none;cursor:pointer;
+              font-size:0.85rem;color:#ccc;padding:0;line-height:1;
+            " onmouseover="this.style.color='#e74c3c'" onmouseout="this.style.color='#ccc'">✕</button>
+          </div>
+        </li>`;
+      }).join('');
+    } catch (err) {
+      list.innerHTML = '<li class="empty-state">Error loading scans.</li>';
+    }
+  }
+
+  // ── Reconciliation ────────────────────────────────────────
+  async function loadRecon() {
+    const date   = document.getElementById('reconDate').value || defaultDate();
+    const result = document.getElementById('reconResult');
+    result.innerHTML = '<p class="empty-state">Loading…</p>';
+    try {
+      const res  = await fetch(`/reconciliation?date=${date}`);
+      const data = await res.json();
+      if (!data.rows.length) { result.innerHTML = '<p class="empty-state">No scan data for this date yet.</p>'; return; }
+      // Build category lookup: location -> [rows]
+      var catMap = {};
+      (data.byCategory || []).forEach(function(c) {
+        if (!catMap[c.location]) catMap[c.location] = [];
+        catMap[c.location].push(c);
+      });
+
+      var clean = function(v) { return v == null ? '\u2014' : String(+parseFloat(v).toFixed(2)); };
+      var fmt   = function(v) { return v === null ? '\u2014' : (v > 0 ? '+' + clean(v) : clean(v)); };
+      var cls   = function(v) { return v === null ? '' : (v > 0.25 ? 'gap-ok' : v < -0.25 ? 'gap-warn' : ''); };
+
+      var rows = data.rows.map(function(r) {
+        var planned  = parseFloat(r.planned_trays)  || 0;
+        var shipped  = parseFloat(r.shipped_trays)  || 0;
+        var received = r.received_trays != null ? parseFloat(r.received_trays) : null;
+        var vsPlan   = planned  ? shipped - planned : null;
+        var vsShip   = received !== null ? received - shipped : null;
+        var overall  = received !== null && planned ? received - planned : null;
+        var detailId = 'cat-' + r.location.replace(/\s+/g, '-');
+        var cats     = (catMap[r.location] || []).map(function(c) {
+          var cp = parseFloat(c.planned_trays) || 0;
+          var cs = parseFloat(c.shipped_trays) || 0;
+          var cr = c.received_trays != null ? parseFloat(c.received_trays) : null;
+          var cvp = cp ? cs - cp : null;
+          var cvs = cr !== null ? cr - cs : null;
+          var cov = cr !== null && cp ? cr - cp : null;
+          return '<tr style="background:#fdf2f7;font-size:0.75rem">' +
+            '<td style="padding-left:22px;color:#888;font-style:italic">' + c.category + '</td>' +
+            '<td style="text-align:center">' + clean(c.planned_trays) + '</td>' +
+            '<td style="text-align:center">' + clean(c.shipped_trays) + '</td>' +
+            '<td class="' + cls(cvp) + '" style="text-align:center">' + fmt(cvp) + '</td>' +
+            '<td style="text-align:center">' + clean(c.received_trays) + '</td>' +
+            '<td class="' + cls(cvs) + '" style="text-align:center">' + fmt(cvs) + '</td>' +
+            '<td class="' + cls(cov) + '" style="font-weight:600;text-align:center">' + fmt(cov) + '</td>' +
+            '</tr>';
+        }).join('');
+        var dot = '<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:' + storeColor(r.location) + ';margin-right:6px;vertical-align:middle;"></span>';
+        return '<tr style="border-left:4px solid ' + storeColor(r.location) + ';cursor:pointer" onclick="toggleCat(this.nextElementSibling.id)">' +
+          '<td>' + dot + '<strong>' + r.location + '</strong> <span style="font-size:0.7rem;color:#aaa">&#9662;</span></td>' +
+          '<td style="text-align:center">' + clean(r.planned_trays) + '</td>' +
+          '<td style="text-align:center">' + clean(r.shipped_trays) + '</td>' +
+          '<td class="' + cls(vsPlan) + '" style="text-align:center">' + fmt(vsPlan) + '</td>' +
+          '<td style="text-align:center">' + clean(r.received_trays) + '</td>' +
+          '<td class="' + cls(vsShip) + '" style="text-align:center">' + fmt(vsShip) + '</td>' +
+          '<td class="' + cls(overall) + '" style="font-weight:700;text-align:center">' + fmt(overall) + '</td>' +
+          '</tr>' +
+          '<tr id="' + detailId + '" style="display:none"><td colspan="7" style="padding:0">' +
+          '<table style="width:100%;border-collapse:collapse;table-layout:fixed"><colgroup><col style="width:28%"><col style="width:12%"><col style="width:12%"><col style="width:12%"><col style="width:12%"><col style="width:12%"><col style="width:12%"></colgroup>' + cats + '</table></td></tr>';
+      }).join('');
+
+      result.innerHTML = '<table class="recon-table"><thead><tr>' +
+        '<th>Location / Category</th>' +
+        '<th style="text-align:center;white-space:nowrap">Plan</th>' +
+        '<th style="text-align:center;white-space:nowrap">Ship</th>' +
+        '<th style="text-align:center;white-space:nowrap">vs Plan</th>' +
+        '<th style="text-align:center;white-space:nowrap">Rcvd</th>' +
+        '<th style="text-align:center;white-space:nowrap">vs Ship</th>' +
+        '<th style="text-align:center;white-space:nowrap">Overall</th>' +
+        '</tr></thead><tbody>' + rows + '</tbody></table>';
+        } catch (err) {
+      result.innerHTML = '<p class="empty-state">Error loading reconciliation.</p>';
+    }
+  }
+
+  // ── Helpers ───────────────────────────────────────────────
+  function showToast(msg, type) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.className = 'toast ' + type;
+  }
+  function clearToast() {
+    document.getElementById('toast').className = 'toast';
+  }
+  function clearScan() {
+    barcodeInput.value = '';
+    hidePreview();
+    clearToast();
+    barcodeInput.focus();
+  }
+
+    function showRackBadge(rackPos) {
+      const el = document.getElementById('rackBadge');
+      if (!rackPos) { el.style.display = 'none'; el.innerHTML = ''; return; }
+      const bg = rackPos.color || '#e2e8f0';
+      // Darken text for light backgrounds
+      el.style.display = 'inline-flex';
+      el.style.alignItems = 'center';
+      el.style.gap = '6px';
+      el.style.padding = '6px 14px';
+      el.style.borderRadius = '20px';
+      el.style.fontSize = '0.85rem';
+      el.style.fontWeight = '700';
+      el.style.background = bg;
+      el.style.color = '#1e293b';
+      el.innerHTML = `🗄️ Rack ${rackPos.rack_number} &nbsp;·&nbsp; Rung ${rackPos.rung_label}`
+        + (rackPos.is_allergen ? ' &nbsp;<span style="color:#dc2626">⚠ Allergen</span>' : '');
+    }
+
+  function toggleCat(id) {
+    var el = document.getElementById(id);
+    if (el) el.style.display = el.style.display === "none" ? "" : "none";
+  }
+
+  // ── Offline status polling ────────────────────────────────────────────────
+  function checkOnlineStatus() {
+    fetch('/status').then(function(r) { return r.json(); }).then(function(s) {
+      var banner = document.getElementById('offlineBanner');
+      var pending = document.getElementById('pendingCount');
+      if (!s.online) {
+        banner.classList.add('visible');
+        banner.classList.remove('syncing');
+        pending.textContent = s.pendingSync > 0 ? '(' + s.pendingSync + ' pending sync)' : '';
+      } else if (s.pendingSync > 0) {
+        banner.classList.add('visible', 'syncing');
+        pending.textContent = 'Syncing ' + s.pendingSync + ' scan(s) to server...';
+        banner.firstChild.textContent = '';
+      } else {
+        banner.classList.remove('visible', 'syncing');
+      }
+    }).catch(function() {});
+  }
+  checkOnlineStatus();
+  setInterval(checkOnlineStatus, 30000);
+
+  // ── iOS-safe modal helpers (replaces prompt / confirm) ────────────────────
+  function _fdbModal(msg, inputDefault) {
+    return new Promise(resolve => {
+      const overlay   = document.getElementById('fdbModal');
+      const msgEl     = document.getElementById('fdbModalMsg');
+      const input     = document.getElementById('fdbModalInput');
+      const okBtn     = document.getElementById('fdbModalOk');
+      const cancelBtn = document.getElementById('fdbModalCancel');
+
+      msgEl.textContent    = msg;
+      const hasInput       = inputDefault !== undefined;
+      input.style.display  = hasInput ? 'block' : 'none';
+      if (hasInput) input.value = inputDefault || '';
+      overlay.style.display = 'flex';
+      if (hasInput) setTimeout(() => input.focus(), 150);
+
+      const finish = val => { overlay.style.display = 'none'; resolve(val); };
+      okBtn.onclick     = () => finish(hasInput ? input.value : true);
+      cancelBtn.onclick = () => finish(hasInput ? null : false);
+
+      // Allow Enter key to confirm
+      input.onkeydown = e => { if (e.key === 'Enter') okBtn.click(); };
+    });
+  }
+  const fdbPrompt  = (msg, def) => _fdbModal(msg, def === undefined ? '' : def);
+  const fdbConfirm = msg        => _fdbModal(msg);
+
+</script>
+
+<!-- ── Custom modal — replaces prompt/confirm for iOS standalone ── -->
+<div id="fdbModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:9999;align-items:center;justify-content:center;padding:20px;-webkit-overflow-scrolling:touch;">
+  <div style="background:#fff;border-radius:16px;padding:24px;width:100%;max-width:360px;box-shadow:0 8px 32px rgba(0,0,0,0.2);">
+    <p id="fdbModalMsg" style="font-size:0.95rem;font-weight:600;color:#2a1a1f;margin-bottom:16px;white-space:pre-line;line-height:1.5;"></p>
+    <input id="fdbModalInput" type="text" autocorrect="off" autocapitalize="words"
+      style="display:none;width:100%;padding:11px 14px;border:2px solid #f0dde2;border-radius:10px;
+             font-size:1rem;margin-bottom:16px;box-sizing:border-box;outline:none;" />
+    <div style="display:flex;gap:10px;justify-content:flex-end;">
+      <button id="fdbModalCancel"
+        style="padding:12px 22px;border:2px solid #f0dde2;border-radius:8px;background:#fff;
+               font-size:0.9rem;font-weight:600;color:#9a7a82;cursor:pointer;">Cancel</button>
+      <button id="fdbModalOk"
+        style="padding:12px 22px;border:none;border-radius:8px;background:#e07888;
+               color:#fff;font-size:0.9rem;font-weight:600;cursor:pointer;">OK</button>
+    </div>
+  </div>
+</div>
+</body>
+</html>
