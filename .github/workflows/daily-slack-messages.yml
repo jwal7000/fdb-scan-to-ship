@@ -2,7 +2,7 @@ name: Daily Store Slack Messages
 
 on:
   schedule:
-    - cron: '30 11 * * *'  # 6:30 AM CDT (runs 1hr late in winter)
+    - cron: '30 11 * * *'
   workflow_dispatch:
 
 jobs:
@@ -16,14 +16,20 @@ jobs:
           cache: 'npm'
       - run: npm ci
       - name: Start Cloud SQL Proxy
+        env:
+          GCP_KEY: ${{ secrets.GCP_SERVICE_KEY }}
         run: |
           curl -fsSL -o cloud-sql-proxy https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.14.1/cloud-sql-proxy.linux.amd64
           chmod +x cloud-sql-proxy
           echo "$GCP_KEY" > gcp-key.json
-          ./cloud-sql-proxy --credentials-file=gcp-key.json analytics-link-370416:us-central1:fivedaughtersbakery &
-          sleep 5
-        env:
-          GCP_KEY: ${{ secrets.GCP_SERVICE_KEY }}
+          echo "Key file size: $(wc -c < gcp-key.json) bytes"
+          ./cloud-sql-proxy --credentials-file=gcp-key.json --port=3306 analytics-link-370416:us-central1:fivedaughtersbakery > /tmp/proxy.log 2>&1 &
+          echo "Proxy PID: $!"
+          sleep 10
+          echo "--- Proxy log ---"
+          cat /tmp/proxy.log
+          echo "--- Port check ---"
+          nc -zv 127.0.0.1 3306 && echo "PORT OPEN" || echo "PORT CLOSED"
       - name: Send daily store messages
         env:
           MYSQL_HOST: 127.0.0.1
