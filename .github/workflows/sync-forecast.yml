@@ -3,7 +3,7 @@ name: Square Inventory Sync
 on:
   schedule:
     - cron: '0 4 * * *'  # 11:00 PM CDT (runs 1hr late in winter)
-  workflow_dispatch:      # also triggerable manually from GitHub
+  workflow_dispatch:
 
 jobs:
   sync-inventory:
@@ -15,13 +15,22 @@ jobs:
           node-version: '22'
           cache: 'npm'
       - run: npm ci
+      - name: Start Cloud SQL Proxy
+        run: |
+          curl -fsSL -o cloud-sql-proxy https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.14.1/cloud-sql-proxy.linux.amd64
+          chmod +x cloud-sql-proxy
+          echo "$GCP_KEY" > gcp-key.json
+          ./cloud-sql-proxy --credentials-file=gcp-key.json analytics-link-370416:us-central1:fivedaughtersbakery &
+          sleep 5
+        env:
+          GCP_KEY: ${{ secrets.GCP_SERVICE_KEY }}
       - name: Sync forecast to Square inventory
         env:
-          MYSQL_HOST: ${{ secrets.MYSQL_HOST }}
+          MYSQL_HOST: 127.0.0.1
           MYSQL_USER: ${{ secrets.MYSQL_USER }}
           MYSQL_PASSWORD: ${{ secrets.MYSQL_PASSWORD }}
           MYSQL_DB: ${{ secrets.MYSQL_DB }}
-          MYSQL_WRITE_HOST: ${{ secrets.MYSQL_HOST }}
+          MYSQL_WRITE_HOST: 127.0.0.1
           MYSQL_WRITE_USER: scan_app
           MYSQL_WRITE_PASSWORD: ${{ secrets.MYSQL_WRITE_PASSWORD }}
           MYSQL_WRITE_DB: ${{ secrets.MYSQL_DB }}

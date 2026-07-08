@@ -3,7 +3,7 @@ name: Daily Store Slack Messages
 on:
   schedule:
     - cron: '30 11 * * *'  # 6:30 AM CDT (runs 1hr late in winter)
-  workflow_dispatch:        # also triggerable manually from GitHub
+  workflow_dispatch:
 
 jobs:
   send-messages:
@@ -15,9 +15,18 @@ jobs:
           node-version: '22'
           cache: 'npm'
       - run: npm ci
+      - name: Start Cloud SQL Proxy
+        run: |
+          curl -fsSL -o cloud-sql-proxy https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.14.1/cloud-sql-proxy.linux.amd64
+          chmod +x cloud-sql-proxy
+          echo "$GCP_KEY" > gcp-key.json
+          ./cloud-sql-proxy --credentials-file=gcp-key.json analytics-link-370416:us-central1:fivedaughtersbakery &
+          sleep 5
+        env:
+          GCP_KEY: ${{ secrets.GCP_SERVICE_KEY }}
       - name: Send daily store messages
         env:
-          MYSQL_HOST: ${{ secrets.MYSQL_HOST }}
+          MYSQL_HOST: 127.0.0.1
           MYSQL_USER: ${{ secrets.MYSQL_USER }}
           MYSQL_PASSWORD: ${{ secrets.MYSQL_PASSWORD }}
           MYSQL_DB: ${{ secrets.MYSQL_DB }}
