@@ -1,0 +1,29 @@
+name: Square Inventory Sync
+
+on:
+  schedule:
+    - cron: '0 4 * * *'  # 11:00 PM CDT (runs 1hr late in winter)
+  workflow_dispatch:      # also triggerable manually from GitHub
+
+jobs:
+  sync-inventory:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - name: Sync forecast to Square inventory
+        env:
+          MYSQL_HOST: ${{ secrets.MYSQL_HOST }}
+          MYSQL_USER: ${{ secrets.MYSQL_USER }}
+          MYSQL_PASSWORD: ${{ secrets.MYSQL_PASSWORD }}
+          MYSQL_DB: ${{ secrets.MYSQL_DB }}
+          MYSQL_WRITE_HOST: ${{ secrets.MYSQL_HOST }}
+          MYSQL_WRITE_USER: scan_app
+          MYSQL_WRITE_PASSWORD: ${{ secrets.MYSQL_WRITE_PASSWORD }}
+          MYSQL_WRITE_DB: ${{ secrets.MYSQL_DB }}
+          SQUARE_ACCESS_TOKEN: ${{ secrets.SQUARE_ACCESS_TOKEN }}
+        run: node sync_forecast.js

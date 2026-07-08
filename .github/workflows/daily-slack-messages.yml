@@ -1,0 +1,25 @@
+name: Daily Store Slack Messages
+
+on:
+  schedule:
+    - cron: '30 11 * * *'  # 6:30 AM CDT (runs 1hr late in winter)
+  workflow_dispatch:        # also triggerable manually from GitHub
+
+jobs:
+  send-messages:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - name: Send daily store messages
+        env:
+          MYSQL_HOST: ${{ secrets.MYSQL_HOST }}
+          MYSQL_USER: ${{ secrets.MYSQL_USER }}
+          MYSQL_PASSWORD: ${{ secrets.MYSQL_PASSWORD }}
+          MYSQL_DB: ${{ secrets.MYSQL_DB }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+        run: node daily-store-messages.js
