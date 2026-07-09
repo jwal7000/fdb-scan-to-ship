@@ -19,11 +19,9 @@ jobs:
         run: |
           curl -fsSL -o cloud-sql-proxy https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.14.1/cloud-sql-proxy.linux.amd64
           chmod +x cloud-sql-proxy
-          echo "$GCP_KEY" > gcp-key.json
-          ./cloud-sql-proxy --credentials-file=gcp-key.json analytics-link-370416:us-central1:fivedaughtersbakery &
-          sleep 5
-        env:
-          GCP_KEY: ${{ secrets.GCP_SERVICE_KEY }}
+          echo '${{ secrets.GCP_SERVICE_KEY_B64 }}' | base64 -d > gcp-key.json
+          ./cloud-sql-proxy --credentials-file=gcp-key.json --port=3306 analytics-link-370416:us-central1:fivedaughtersbakery &
+          sleep 10
       - name: Sync forecast to Square inventory
         env:
           MYSQL_HOST: 127.0.0.1
