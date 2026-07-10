@@ -2,7 +2,7 @@ name: Square Inventory Sync
 
 on:
   schedule:
-    - cron: '0 4 * * *'  # 11:00 PM CDT (runs 1hr late in winter)
+    - cron: '15 3 * * *'  # 11:00 PM CDT (runs 1hr late in winter)
   workflow_dispatch:
 
 jobs:
