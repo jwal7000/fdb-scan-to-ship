@@ -2,7 +2,7 @@ name: Daily Store Slack Messages
 
 on:
   schedule:
-    - cron: '30 11 * * *'  # 6:30 AM CDT (runs 1hr late in winter)
+    - cron: '15 11 * * *'  # 6:30 AM CDT (runs 1hr late in winter)
   workflow_dispatch:
 
 jobs:
