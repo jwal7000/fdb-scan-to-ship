@@ -42,6 +42,7 @@ module.exports = {
       cwd: PROJ,
       exec_mode: 'fork',
       autorestart: false,
+      cron_restart: '15 22 * * *',
       watch: false,
       out_file: `${PROJ}/logs/sync-forecast-out.log`,
       error_file: `${PROJ}/logs/sync-forecast-error.log`,
