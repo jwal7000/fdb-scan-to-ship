@@ -96,7 +96,8 @@ async function main() {
         Location,
         Title    AS title,
         Quantity AS qty,
-        Pickup_Time
+        Pickup_Time,
+        Checkout_Method
       FROM vw_shopify_all_order_details
       WHERE DATE(Pickup_Date) = ?
         AND Title NOT LIKE '%Assorted%'
@@ -117,10 +118,11 @@ async function main() {
       const key = `${row.order_number}||${row.Customer_Name}||${row.Pickup_Time || ''}`;
       if (!preordersByLoc[loc][key]) {
         preordersByLoc[loc][key] = {
-          order_number: row.order_number,
-          customer:     row.Customer_Name,
-          pickup_time:  row.Pickup_Time,
-          items:        [],
+          order_number:     row.order_number,
+          customer:         row.Customer_Name,
+          pickup_time:      row.Pickup_Time,
+          checkout_method:  row.Checkout_Method,
+          items:            [],
         };
       }
       preordersByLoc[loc][key].items.push({ title: row.title, qty: Number(row.qty) });
@@ -219,7 +221,10 @@ function buildMessage(locationName, dateLabel, scans, preorders) {
     let totalUnits = 0;
     preorders.forEach(order => {
       const timeStr = order.pickup_time ? ` · ${order.pickup_time}` : '';
+      const sourceMap = { 'pickup': 'Shopify Preorder', 'Square Pickup': 'Square Preorder' };
+      const source = sourceMap[order.checkout_method] || order.checkout_method || 'Preorder';
       lines.push(`*Order #${order.order_number} — ${order.customer}${timeStr}*`);
+      lines.push(`  _Source: ${source}_`);
       order.items.forEach(item => {
         lines.push(`  • ${item.title} — ${item.qty}`);
         totalUnits += item.qty;
