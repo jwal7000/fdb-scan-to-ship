@@ -1,36 +1,30 @@
 name: Square Inventory Sync
 
 on:
-  schedule:
-    - cron: '15 3 * * *'  # 11:00 PM CDT (runs 1hr late in winter)
   workflow_dispatch:
 
 jobs:
-  sync-inventory:
+  sync:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'npm'
-      - run: npm ci
+      - name: Install dependencies
+        run: npm ci
       - name: Start Cloud SQL Proxy
         run: |
-          curl -fsSL -o cloud-sql-proxy https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.14.1/cloud-sql-proxy.linux.amd64
+          curl -o cloud-sql-proxy https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.6.0/cloud-sql-proxy.linux.amd64
           chmod +x cloud-sql-proxy
           echo '${{ secrets.GCP_SERVICE_KEY_B64 }}' | base64 -d > gcp-key.json
           ./cloud-sql-proxy --credentials-file=gcp-key.json --port=3306 analytics-link-370416:us-central1:fivedaughtersbakery &
-          sleep 10
-      - name: Sync forecast to Square inventory
+          sleep 5
+      - name: Sync inventory
         env:
           MYSQL_HOST: 127.0.0.1
           MYSQL_USER: ${{ secrets.MYSQL_USER }}
           MYSQL_PASSWORD: ${{ secrets.MYSQL_PASSWORD }}
-          MYSQL_DB: ${{ secrets.MYSQL_DB }}
-          MYSQL_WRITE_HOST: 127.0.0.1
-          MYSQL_WRITE_USER: scan_app
-          MYSQL_WRITE_PASSWORD: ${{ secrets.MYSQL_WRITE_PASSWORD }}
-          MYSQL_WRITE_DB: ${{ secrets.MYSQL_DB }}
+          MYSQL_DB: production
           SQUARE_ACCESS_TOKEN: ${{ secrets.SQUARE_ACCESS_TOKEN }}
         run: node sync_forecast.js
