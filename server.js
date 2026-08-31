@@ -7,7 +7,7 @@ require('dotenv').config({ path: require('path').join(__dirname, '.env') });
 const express = require('express');
 const path = require('path');
 const {query, insertScan, recentScans, reconciliation, reconciliationByCategory, getScannedTotal,
-  getRackPosition, deleteScan, getStatus, cacheForecasts, queryForecastCache, queryForecastCacheById, startHealthCheck, syncOfflineScans, checkDuplicateScan} = require('./db');
+  backfillStore, getRackPosition, deleteScan, getStatus, cacheForecasts, queryForecastCache, queryForecastCacheById, startHealthCheck, syncOfflineScans, checkDuplicateScan} = require('./db');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -103,6 +103,24 @@ app.get('/ticket/:barcode', async (req, res) => {
     return res.status(400).json({ error: parsed.error });
   }
 
+  // Cache-first: instant, immune to slow internet
+  {
+    const d = parsed.date || scanDate || new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' });
+    const cached = parsed.id ? queryForecastCacheById(parsed.id) : queryForecastCache(parsed.sku, parsed.location, d);
+    if (cached) {
+      const ticket = {
+        id: cached.item_level_id, forecast_date: cached.forecast_date,
+        location: cached.location, sku: cached.sku, item_name: cached.item_name,
+        item_category: cached.category, planned_trays: cached.planned_trays,
+        forecasted_trays: cached.planned_trays, override_trays: null,
+        units_per_tray: cached.units_per_tray || null,
+        planned_units: cached.units_per_tray ? Math.round(cached.planned_trays * cached.units_per_tray) : null,
+      };
+      const rackPos = await getRackPosition(String(cached.forecast_date).slice(0, 10), cached.location, cached.sku);
+      return res.json({ ticket, rackPosition: rackPos || null, cached: true });
+    }
+  }
+
   try {
     let rows;
 
@@ -171,7 +189,7 @@ app.get('/ticket/:barcode', async (req, res) => {
     // Rack position lookup
     const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' });
     const forecastDate = ticket.forecast_date
-      ? new Date(ticket.Forecast_Date).toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
+      ? String(ticket.forecast_date).slice(0, 10)
       : today;
     const rackPos = await getRackPosition(forecastDate, ticket.location, ticket.sku);
     res.json({ ticket, rackPosition: rackPos || null });
@@ -210,8 +228,13 @@ app.post('/scan', async (req, res) => {
   try {
     // Look up the ticket
     let rows = [];
+    {
+      const _cd = parsed.date || req.body.scan_date || new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' });
+      const _cached = parsed.id ? queryForecastCacheById(parsed.id) : queryForecastCache(parsed.sku, parsed.location, _cd);
+      if (_cached) rows = [{ id: _cached.item_level_id, forecast_date: _cached.forecast_date, location: _cached.location, sku: _cached.sku, item_name: _cached.item_name, planned_trays: _cached.planned_trays }];
+    }
     try {
-      if (parsed.id) {
+      if (!rows.length && parsed.id) {
         rows = await query(
         `SELECT pf.id, pf.Forecast_Date AS forecast_date, pf.Location AS location,
                 pf.SKU AS sku, pf.Item_Name AS item_name,
@@ -219,7 +242,7 @@ app.post('/scan', async (req, res) => {
          FROM Production_Forecast_Item_Level pf WHERE pf.id = ? LIMIT 1`,
         [parsed.id]
       );
-    } else {
+    } else if (!rows.length) {
       rows = await query(
         `SELECT pf.id, pf.Forecast_Date AS forecast_date, pf.Location AS location,
                 pf.SKU AS sku, pf.Item_Name AS item_name,
@@ -246,18 +269,14 @@ app.post('/scan', async (req, res) => {
     const ticket = rows[0];
 
     // ── Duplicate scan check ────────────────────────────────────────────────────
-    console.log('[DUP DEBUG] barcode received:', req.body.barcode);
-    console.log('[DUP DEBUG] parsed:', JSON.stringify(parsed));
     // master_ticket_ref = "ticket_num-YYYY-MM-DD"  e.g. "002-2026-05-22"
     // Only active when the new 5-part QR format is used (parsed.ticket_num exists).
     const _scanDate  = parsed.date
       || req.body.scan_date
       || new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' });
     const _masterRef = parsed.ticket_num ? (parsed.ticket_num + '-' + _scanDate) : null;
-    if (_masterRef) {
-      console.log('[DUP DEBUG] _masterRef:', _masterRef, '| scan_type:', scan_type);
+    if (_masterRef && !req.body.force) {
     const _dup = await checkDuplicateScan(_masterRef, scan_type);
-    console.log('[DUP DEBUG] _dup result:', JSON.stringify(_dup));
       if (_dup) {
         return res.status(409).json({
           error: 'Ticket #' + parsed.ticket_num + ' (' + (ticket.item_name || ticket.sku) + ')' +
@@ -273,10 +292,21 @@ app.post('/scan', async (req, res) => {
       }
     }
 
+    // Guard: reject phantom scans with stale forecast dates
+    const forecastDate = String(ticket.forecast_date).slice(0, 10);
+    const todayCT = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' });
+    const staleDays = Math.floor((Date.parse(todayCT) - Date.parse(forecastDate)) / 86400000);
+    if (staleDays > 3) {
+      return res.status(400).json({
+        error: 'Scan blocked — ticket date is ' + forecastDate + ' (' + staleDays + ' days ago). Please rescan the correct label.',
+        stale: true,
+      });
+    }
+
     // Write the scan record
     const result = await insertScan({
       item_level_id: ticket.id,
-      forecast_date: new Date(ticket.forecast_date).toISOString().slice(0, 10),
+      forecast_date: forecastDate,
       location: ticket.location,
       sku: ticket.sku,
       planned_trays: ticket.planned_trays,
@@ -393,13 +423,63 @@ app.get('/status', (req, res) => {
 });
 
 // ── Health check ───────────────────────────────────────────────────────────────
+
+
+// Admin: PIN verification
+app.post('/admin/verify-pin', (req, res) => {
+  const { pin } = req.body || {};
+  res.json({ ok: !!(pin && pin === process.env.ADMIN_PIN) });
+});
+
+// Admin: backfill via UI (PIN-authenticated)
+app.post('/admin/backfill-ui', async (req, res) => {
+  const { date, location, pin } = req.body || {};
+  if (!pin || pin !== process.env.ADMIN_PIN)
+    return res.status(403).json({ error: 'Unauthorized' });
+  if (!date || !location)
+    return res.status(400).json({ error: 'date and location are required' });
+  try {
+    const result = await backfillStore(date, location);
+    console.log('[backfill-ui]', location, date, result);
+    res.json({ ok: true, date, location, ...result });
+  } catch (err) {
+    console.error('[backfill-ui]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Hidden admin endpoint — not linked in UI
+app.post('/admin/backfill', async (req, res) => {
+  const { date, location, secret } = req.body || {};
+  if (!secret || secret !== process.env.ADMIN_SECRET)
+    return res.status(403).json({ error: 'Unauthorized' });
+  if (!date || !location)
+    return res.status(400).json({ error: 'date and location are required' });
+  try {
+    const result = await backfillStore(date, location);
+    console.log(`[backfill] ${location} ${date}:`, result);
+    res.json({ ok: true, date, location, ...result });
+  } catch (err) {
+    console.error('[backfill]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/health', async (req, res) => {
+  const st = getStatus();
+  let read = 'ok', tickets = null;
   try {
     const rows = await query('SELECT COUNT(*) AS cnt FROM Production_Forecast_Item_Level WHERE Forecast_Date = CURDATE()');
-    res.json({ status: 'ok', tickets_today: rows[0].cnt });
-  } catch (err) {
-    res.status(500).json({ status: 'error', detail: err.message });
-  }
+    tickets = rows[0].cnt;
+  } catch (err) { read = err.message; }
+  const ok = read === 'ok' && st.online;
+  res.status(ok ? 200 : 500).json({
+    status: ok ? 'ok' : 'degraded',
+    read_db: read,
+    write_db: st.online ? 'ok' : 'offline (SQLite fallback)',
+    pending_sync: st.pendingSync,
+    tickets_today: tickets,
+  });
 });
 
 // ── Start ──────────────────────────────────────────────────────────────────────
@@ -412,5 +492,10 @@ app.listen(PORT, '0.0.0.0', async () => {
   await syncOfflineScans();
   await cacheForecasts([today, tomorrow]);
   startHealthCheck();
+  setInterval(async () => {
+    const t  = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' });
+    const tm = new Date(Date.now() + 86400000).toLocaleDateString('en-CA', { timeZone: 'America/Chicago' });
+    await cacheForecasts([t, tm]);
+  }, 30 * 60 * 1000);
   console.log('Offline fallback ready — forecast cached, health check running');
 });

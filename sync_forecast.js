@@ -9,6 +9,7 @@
 'use strict';
 const { query }        = require('./db');
 const { updateInventory } = require('./square');
+const { refreshCatalogMapping } = require('./sync_catalog_mapping');
 
 function tomorrowCST() {
   const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
@@ -19,6 +20,10 @@ async function run() {
   const targetDate = process.argv[2] || tomorrowCST();
   const ts = new Date().toISOString();
   console.log(`\n[sync_forecast] ${ts} — pushing forecast for ${targetDate}`);
+
+  // Refresh SKU mapping from Square catalog so new items are never skipped
+  try { await refreshCatalogMapping(); }
+  catch (e) { console.error('[sync_forecast] catalog mapping refresh failed:', e.message); }
 
   // Load reference data in parallel
   const [forecast, bufferRows, skuMapRows, locationRows] = await Promise.all([

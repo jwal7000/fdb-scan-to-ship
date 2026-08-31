@@ -18,3 +18,8 @@ logs/
 
 # Binary
 cloud-sql-proxy
+
+# Local-only
+backups/
+heartbeat.sh
+test.js

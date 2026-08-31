@@ -19,6 +19,7 @@ const readPool = mysql.createPool({
   user: process.env.MYSQL_USER || 'FDB_SteveConnect',
   password: process.env.MYSQL_PASSWORD || '',
   database: process.env.MYSQL_DB || 'production',
+  dateStrings: true,
   waitForConnections: true,
   connectionLimit: 5,
   connectTimeout: 10000,
@@ -30,10 +31,14 @@ readPool.pool.on('error', (err) => { console.error('[read pool error]', err.mess
 let writePool = null;
 if (process.env.MYSQL_WRITE_USER && process.env.MYSQL_WRITE_PASSWORD) {
   writePool = mysql.createPool({
-    host: process.env.MYSQL_WRITE_HOST || process.env.MYSQL_HOST || '104.197.166.101',
+    host: process.env.MYSQL_WRITE_HOST || process.env.MYSQL_HOST || '127.0.0.1',
+    port: parseInt(process.env.MYSQL_WRITE_PORT || '3307'),
+    ssl: false,
+    enableCleartextPlugin: true,
     user: process.env.MYSQL_WRITE_USER,
     password: process.env.MYSQL_WRITE_PASSWORD,
     database: process.env.MYSQL_WRITE_DB || process.env.MYSQL_DB || 'production',
+    dateStrings: true,
     waitForConnections: true,
     connectionLimit: 5,
     connectTimeout: 10000,
@@ -89,6 +94,9 @@ function getSqlite() {
   try { sqliteDb.exec('ALTER TABLE Kitchen_Shipment_Scans ADD COLUMN synced INTEGER NOT NULL DEFAULT 0'); } catch(e) {}
   // Migrate: add master_ticket_ref for duplicate scan detection
   try { sqliteDb.exec('ALTER TABLE Kitchen_Shipment_Scans ADD COLUMN master_ticket_ref TEXT'); } catch(e) {}
+  try { sqliteDb.exec('ALTER TABLE Forecast_Cache ADD COLUMN units_per_tray REAL'); } catch(e) {}
+  try { sqliteDb.exec('CREATE TABLE IF NOT EXISTS Rack_Cache (forecast_date TEXT, location TEXT, sku TEXT, rack_number TEXT, rung_label TEXT, is_allergen INTEGER, color TEXT, category TEXT)'); } catch(e) {}
+  try { sqliteDb.exec('CREATE INDEX IF NOT EXISTS idx_rc ON Rack_Cache(forecast_date, location, sku)'); } catch(e) {}
   return sqliteDb;
 }
 
@@ -304,13 +312,22 @@ async function cacheForecasts(dates) {
   for (const date of dates) {
     try {
       const rows = await query(
-        'SELECT pf.id AS item_level_id, DATE(pf.Forecast_Date) AS forecast_date, pf.Location AS location, pf.SKU AS sku, pf.Item_Name AS item_name, pf.Item_Category AS category, COALESCE(pf.Kitchen_Override_Trays, pf.Final_Forecasted_Trays) AS planned_trays FROM Production_Forecast_Item_Level pf WHERE DATE(pf.Forecast_Date) = ?',
-        [date]
-      );
+        'SELECT pf.id AS item_level_id, DATE(pf.Forecast_Date) AS forecast_date, pf.Location AS location, pf.SKU AS sku, pf.Item_Name AS item_name, pf.Item_Category AS category, '
+        + 'COALESCE(pf.Kitchen_Override_Trays, pf.Final_Forecasted_Trays) AS planned_trays, '
+        + 'COALESCE(cs.Units_Per_Tray, cc.Units_Per_Tray) AS units_per_tray '
+        + 'FROM Production_Forecast_Item_Level pf '
+        + "LEFT JOIN Kitchen_Tray_Screen_Conversions cs ON cs.Sku = pf.SKU AND cs.Mapping_Method = 'Item_Sku' "
+        + "LEFT JOIN Kitchen_Tray_Screen_Conversions cc ON cc.Item_Category = pf.Item_Category AND cc.Mapping_Method = 'Category' "
+        + 'WHERE DATE(pf.Forecast_Date) = ?', [date]);
       sqlite.prepare('DELETE FROM Forecast_Cache WHERE forecast_date = ?').run(date);
-      const ins = sqlite.prepare('INSERT INTO Forecast_Cache (item_level_id, forecast_date, location, sku, item_name, category, planned_trays) VALUES (?, ?, ?, ?, ?, ?, ?)');
-      sqlite.transaction(function(rs) { rs.forEach(function(r) { ins.run(r.item_level_id, r.forecast_date, r.location, r.sku, r.item_name, r.category, r.planned_trays); }); })(rows);
+      const ins = sqlite.prepare('INSERT INTO Forecast_Cache (item_level_id, forecast_date, location, sku, item_name, category, planned_trays, units_per_tray) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+      sqlite.transaction(function(rs) { rs.forEach(function(r) { ins.run(r.item_level_id, r.forecast_date, r.location, r.sku, r.item_name, r.category, r.planned_trays == null ? null : parseFloat(r.planned_trays), r.units_per_tray == null ? null : parseFloat(r.units_per_tray)); }); })(rows);
       console.log('[cache] Cached ' + rows.length + ' forecast rows for ' + date);
+      const racks = await query('SELECT forecast_date, location, sku, rack_number, rung_label, is_allergen, color, category FROM Rack_Assignments WHERE forecast_date = ?', [date]);
+      sqlite.prepare('DELETE FROM Rack_Cache WHERE forecast_date = ?').run(date);
+      const rins = sqlite.prepare('INSERT INTO Rack_Cache (forecast_date, location, sku, rack_number, rung_label, is_allergen, color, category) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+      sqlite.transaction(function(rs) { rs.forEach(function(r) { rins.run(String(r.forecast_date).slice(0, 10), r.location, r.sku, r.rack_number == null ? null : String(r.rack_number), r.rung_label == null ? null : String(r.rung_label), r.is_allergen == null ? null : Number(r.is_allergen), r.color || null, r.category || null); }); })(racks);
+      console.log('[cache] Cached ' + racks.length + ' rack rows for ' + date);
     } catch (e) {
       console.error('[cache] Failed for ' + date + ':', e.message);
     }
@@ -405,17 +422,56 @@ async function checkDuplicateScan(master_ticket_ref, scan_type) {
   }
 }
 
-module.exports = {getRackPosition, query, insertScan, recentScans, reconciliation, reconciliationByCategory, getScannedTotal, deleteScan, getStatus, cacheForecasts, queryForecastCache, queryForecastCacheById, startHealthCheck, syncOfflineScans, checkDuplicateScan };
+
+async function backfillStore(date, location) {
+  if (!writePool) throw new Error('Write pool not configured');
+
+  const [rows] = await readPool.execute(`
+    SELECT id, SKU, forecast_date,
+      COALESCE(Kitchen_Override_Trays, Final_Forecasted_Trays) AS planned_trays
+    FROM Production_Forecast_Item_Level
+    WHERE forecast_date = ? AND location = ?
+    ORDER BY SKU
+  `, [date, location]);
+
+  if (rows.length === 0) return { inserted: 0, skipped: 0, failed: 0 };
+
+  const ts = `${date} 08:00:00`;
+  let inserted = 0, skipped = 0, failed = 0;
+
+  for (const row of rows) {
+    try {
+      // Skip if a scan record already exists for this sku/date/location
+      const [existing] = await writePool.execute(
+        'SELECT id FROM Kitchen_Shipment_Scans WHERE forecast_date = ? AND location = ? AND sku = ? AND scan_type = \'shipped\' LIMIT 1',
+        [date, location, row.SKU]
+      );
+      if (existing.length > 0) { skipped++; continue; }
+      await writePool.execute(`
+        INSERT INTO Kitchen_Shipment_Scans
+          (scan_timestamp, item_level_id, forecast_date, location, sku,
+           planned_trays, actual_trays, scan_type, scanned_by, notes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'shipped', 'MANUAL', ?)
+      `, [ts, String(row.id), row.forecast_date, location, row.SKU,
+          row.planned_trays, row.planned_trays, `Manual backfill - ${date}`]);
+      inserted++;
+    } catch (err) {
+      if (err.code === 'ER_DUP_ENTRY') skipped++;
+      else { console.error(`[backfillStore] ${row.SKU}:`, err.message); failed++; }
+    }
+  }
+  return { inserted, skipped, failed, total: rows.length };
+}
+
+module.exports = {backfillStore, getRackPosition, query, insertScan, recentScans, reconciliation, reconciliationByCategory, getScannedTotal, deleteScan, getStatus, cacheForecasts, queryForecastCache, queryForecastCacheById, startHealthCheck, syncOfflineScans, checkDuplicateScan };
 
 async function getRackPosition(forecast_date, location, sku) {
   try {
-    const rows = await query(
-      `SELECT rack_number, rung_label, is_allergen, color, category
-       FROM Rack_Assignments
-       WHERE forecast_date = ? AND location = ? AND sku = ?
-       LIMIT 1`,
-      [forecast_date, location, sku]
-    );
+    const row = getSqlite().prepare('SELECT rack_number, rung_label, is_allergen, color, category FROM Rack_Cache WHERE forecast_date = ? AND location = ? AND sku = ? LIMIT 1').get(forecast_date, location, sku);
+    if (row) return row;
+  } catch (e) {}
+  try {
+    const rows = await query('SELECT rack_number, rung_label, is_allergen, color, category FROM Rack_Assignments WHERE forecast_date = ? AND location = ? AND sku = ? LIMIT 1', [forecast_date, location, sku]);
     return rows[0] || null;
   } catch (e) {
     console.warn('[getRackPosition] error:', e.message);

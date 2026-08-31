@@ -3,9 +3,9 @@ const PROJ = '/Users/openclaw-user/.openclaw/workspace/scan-to-ship';
 module.exports = {
   apps: [
     {
-      name: 'sql-proxy',
-      script: `${PROJ}/cloud-sql-proxy`,
-      args: `--credentials-file ${PROJ}/gcp-key.json analytics-link-370416:us-central1:fivedaughtersbakery`,
+      name: 'cloud-sql-proxy',
+      script: '/Users/openclaw-user/bin/cloud-sql-proxy',
+      args: '--credentials-file=/Users/openclaw-user/cloud-sql-key.json --port=3307 analytics-link-370416:us-central1:fivedaughtersbakery',
       exec_mode: 'fork',
       instances: 1,
       autorestart: true,

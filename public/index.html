@@ -103,6 +103,7 @@
     <p>Scan-to-Ship</p>
   </div>
 </header>
+<div class="offline-banner" id="offlineBanner"></div>
 <div id="userBar" style="background:#fff;border-bottom:1px solid #f0dde2;padding:6px 20px;display:flex;align-items:center;justify-content:flex-end;gap:10px;font-size:0.8rem;">
   <span style="color:#9a7a82;">Signed in as</span>
   <strong id="userDisplay" style="color:#2a1a1f;"></strong>
@@ -113,6 +114,7 @@
   <button class="mode-btn active" onclick="switchTab('scan')">Scan</button>
   <button class="mode-btn" onclick="switchTab('recent')">Recent</button>
   <button class="mode-btn" onclick="switchTab('recon')">Reconcile</button>
+  <button class="mode-btn" id="settingsTabBtn" onclick="switchTab('settings')" title="Settings" style="opacity:0.6;font-size:1.05rem;padding:6px 11px;">⚙</button>
 </div>
 
 <div class="container">
@@ -224,6 +226,42 @@
       </div>
     </div>
   </div>
+  <!-- SETTINGS TAB -->
+  <div class="tab-panel" id="tab-settings">
+    <div class="scan-card">
+      <div id="settingsPinOverlay">
+        <p style="text-align:center;font-size:0.85rem;color:#8a7a7e;margin-bottom:14px;">Admin access required</p>
+        <label>PIN</label>
+        <input type="password" id="settingsPin" inputmode="numeric" maxlength="6" placeholder="••••"
+          style="text-align:center;letter-spacing:0.4em;font-size:1.5rem;padding:10px;"
+          onkeydown="if(event.key==='Enter') verifyAdminPin()" />
+        <button onclick="verifyAdminPin()" style="margin-top:10px;width:100%;">Unlock</button>
+        <p id="pinError" style="color:#e07888;display:none;text-align:center;margin-top:8px;font-size:0.85rem;">Incorrect PIN</p>
+      </div>
+      <div id="settingsContent" style="display:none;">
+        <p style="font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:#a08890;margin-bottom:14px;">Enter Expected as Scanned</p>
+        <label>Date</label>
+        <input type="date" id="backfillDate" />
+        <label style="margin-top:12px;display:block;">Location</label>
+        <select id="backfillLocation" style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-size:0.95rem;background:#fff;margin-top:4px;">
+          <option value="">Select store...</option>
+          <option>12th South</option>
+          <option>5th &amp; Broad</option>
+          <option>Avalon</option>
+          <option>East</option>
+          <option>L&amp;L Market</option>
+          <option>Ponce City Market</option>
+          <option>The Factory</option>
+          <option>The Fountains</option>
+          <option>The Gulch</option>
+          <option>Westside Provisions</option>
+        </select>
+        <button onclick="runBackfill()" style="margin-top:16px;width:100%;">Enter as Scanned</button>
+        <div id="backfillResult" style="margin-top:12px;font-size:0.88rem;min-height:24px;"></div>
+      </div>
+    </div>
+  </div>
+
 
 </div>
 
@@ -311,6 +349,10 @@
     event.currentTarget.classList.add('active');
     if (name === 'recent') loadRecent();
     if (name === 'scan' && !manualMode) document.getElementById('barcodeInput').focus();
+    if (name === 'settings') {
+      document.getElementById('settingsTabBtn').classList.add('active');
+      if (!window._pinVerified) setTimeout(() => document.getElementById('settingsPin').focus(), 100);
+    }
     if (name === 'recon') {
       const d = document.getElementById('reconDate');
       if (!d.value) d.value = today();
@@ -550,10 +592,22 @@
       const data = await res.json();
 
       if (res.status === 409) {
-        // Duplicate — show orange warning but don't block
-        showToast('⚠️ ' + (data.error || 'Duplicate scan — already recorded'), 'warning');
-        btn.disabled = false;
-        btn.textContent = '✓ Confirm Scan';
+        const proceed = await fdbConfirm((data.error || 'Duplicate scan — already recorded') + '\n\nRecord it anyway?');
+        if (!proceed) return;
+        const res2 = await fetch('/scan', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            barcode: currentBarcode || currentTicket.id, actual_trays: actualTrays,
+            scan_type: currentScanType, scan_date: selectedDate, force: true,
+            scanned_by: localStorage.getItem('scanned_by') || 'unknown',
+            device_id: currentScanType === 'received' ? (document.getElementById('locationSelect').value || null) : 'kitchen',
+          }),
+        });
+        const data2 = await res2.json();
+        if (!res2.ok) { showToast(data2.error || 'Save failed', 'error'); return; }
+        showToast('Recorded (duplicate override): ' + currentTicket.item_name + ' - ' + actualTrays + ' trays', 'success');
+        if (!manualMode) { barcodeInput.value = ''; hidePreview(); barcodeInput.focus(); }
+        else { hidePreview(); document.querySelectorAll('.flavor-btn').forEach(b => b.classList.remove('selected')); }
         return;
       }
       if (!res.ok) { showToast(data.error || 'Save failed', 'error'); return; }
@@ -765,15 +819,14 @@
   function checkOnlineStatus() {
     fetch('/status').then(function(r) { return r.json(); }).then(function(s) {
       var banner = document.getElementById('offlineBanner');
-      var pending = document.getElementById('pendingCount');
+      if (!banner) return;
       if (!s.online) {
         banner.classList.add('visible');
         banner.classList.remove('syncing');
-        pending.textContent = s.pendingSync > 0 ? '(' + s.pendingSync + ' pending sync)' : '';
+        banner.textContent = 'OFFLINE — scans are saving locally' + (s.pendingSync > 0 ? ' (' + s.pendingSync + ' pending sync)' : '');
       } else if (s.pendingSync > 0) {
         banner.classList.add('visible', 'syncing');
-        pending.textContent = 'Syncing ' + s.pendingSync + ' scan(s) to server...';
-        banner.firstChild.textContent = '';
+        banner.textContent = 'Syncing ' + s.pendingSync + ' scan(s) to server...';
       } else {
         banner.classList.remove('visible', 'syncing');
       }
@@ -808,6 +861,57 @@
   }
   const fdbPrompt  = (msg, def) => _fdbModal(msg, def === undefined ? '' : def);
   const fdbConfirm = msg        => _fdbModal(msg);
+
+
+
+  // ── Settings PIN + Backfill ──────────────────────────────
+  window._pinVerified = false;
+
+  async function verifyAdminPin() {
+    const pin = document.getElementById('settingsPin').value;
+    document.getElementById('pinError').style.display = 'none';
+    try {
+      const r = await fetch('/admin/verify-pin', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ pin })
+      });
+      const d = await r.json();
+      if (d.ok) {
+        window._pinVerified = true;
+        document.getElementById('settingsPinOverlay').style.display = 'none';
+        document.getElementById('settingsContent').style.display = 'block';
+        document.getElementById('backfillDate').value = today();
+      } else {
+        document.getElementById('pinError').style.display = 'block';
+        document.getElementById('settingsPin').value = '';
+        document.getElementById('settingsPin').focus();
+      }
+    } catch(e) { document.getElementById('pinError').style.display = 'block'; }
+  }
+
+  async function runBackfill() {
+    const date     = document.getElementById('backfillDate').value;
+    const location = document.getElementById('backfillLocation').value;
+    const pin      = document.getElementById('settingsPin').value;
+    const result   = document.getElementById('backfillResult');
+    if (!date || !location) {
+      result.innerHTML = '<span style="color:#e07888;">Select a date and location.</span>';
+      return;
+    }
+    result.innerHTML = '<span style="color:#8a7a7e;">Working…</span>';
+    try {
+      const r = await fetch('/admin/backfill-ui', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ date, location, pin })
+      });
+      const d = await r.json();
+      if (d.ok) {
+        result.innerHTML = '<span style="color:#2d6a4f;font-weight:600;">✓ ' + d.inserted + ' entered, ' + d.skipped + ' already existed</span>';
+      } else {
+        result.innerHTML = '<span style="color:#e07888;">' + (d.error || 'Error') + '</span>';
+      }
+    } catch(e) { result.innerHTML = '<span style="color:#e07888;">Request failed.</span>'; }
+  }
 
 </script>
 

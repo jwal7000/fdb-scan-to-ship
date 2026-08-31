@@ -96,11 +96,12 @@ async function main() {
         Location,
         Title    AS title,
         Quantity AS qty,
+        price,
+        SKU,
         Pickup_Time,
         Checkout_Method
       FROM vw_shopify_all_order_details
       WHERE DATE(Pickup_Date) = ?
-        AND Title NOT LIKE '%Assorted%'
       ORDER BY Location, order_number, Title
     `, [date]);
 
@@ -125,7 +126,28 @@ async function main() {
           items:            [],
         };
       }
-      preordersByLoc[loc][key].items.push({ title: row.title, qty: Number(row.qty) });
+      const isSquare = row.Checkout_Method === 'Square Pickup';
+      if (row.Checkout_Method === 'pickup') {  // Shopify only — ezcater etc. pass through
+        // A: Shopify bundles emit an identical component row at unit price — keep the bundle row
+        const dup = preorders.find(r2 => r2 !== row
+          && r2.order_number === row.order_number
+          && r2.title === row.title
+          && Number(r2.qty) === Number(row.qty)
+          && Number(r2.price) > Number(row.price));
+        if (dup) continue;
+        // B: box orders expand into component rows — drop non-box rows when the order has a box
+        const isBundleRow = r => /box/i.test(r.title || '') || String(r.SKU || '').slice(0, 2) === '12';
+        if (!isBundleRow(row) && preorders.some(r2 => r2.order_number === row.order_number && isBundleRow(r2))) continue;
+        preordersByLoc[loc][key].items.push({ title: row.title, qty: Number(row.qty) });
+      } else {
+        // Square sends one row per unit — aggregate them
+        const existingItem = preordersByLoc[loc][key].items.find(i => i.title === row.title);
+        if (existingItem) {
+          existingItem.qty += Number(row.qty);
+        } else {
+          preordersByLoc[loc][key].items.push({ title: row.title, qty: Number(row.qty) });
+        }
+      }
     }
 
     const dateLabel = new Date(date + 'T12:00:00').toLocaleDateString('en-US', {
@@ -141,17 +163,23 @@ async function main() {
         : [];
 
       const messageText = buildMessage(loc.displayName, dateLabel, locationScans, locationPreorders);
+      const detailText  = buildTrayDetail(locationScans);
 
       if (dryRun) {
         console.log(`${'═'.repeat(60)}`);
         console.log(`Channel: #${loc.slackChannel}`);
         console.log('─'.repeat(60));
         console.log(messageText);
+        if (detailText) {
+          console.log('--- 🧵 THREAD REPLY ---');
+          console.log(detailText);
+        }
         console.log('');
         sent++;
       } else {
         try {
-          await postToSlack(SLACK_TOKEN, loc.slackChannel, messageText);
+          const ts = await postToSlack(SLACK_TOKEN, loc.slackChannel, messageText);
+          if (detailText) await postToSlack(SLACK_TOKEN, loc.slackChannel, detailText, ts);
           const tag = locationScans.length === 0 && locationPreorders.length === 0 ? ' (no data)' : '';
           console.log(`✓ #${loc.slackChannel}${tag}`);
           sent++;
@@ -193,21 +221,13 @@ function buildMessage(locationName, dateLabel, scans, preorders) {
     // Sort categories by priority, items within each by trays descending
     const sortedCats = Object.keys(byCat).sort((a, b) => categoryPriority(a) - categoryPriority(b));
 
-    sortedCats.forEach(cat => {
-      const label  = CATEGORY_LABELS[cat] || cat;
-      const sorted = byCat[cat].sort((a, b) => parseFloat(b.total_trays) - parseFloat(a.total_trays));
-      const catTotal = sorted.reduce((sum, r) => sum + parseFloat(r.total_trays), 0);
-
-      lines.push(`*${label}*`);
-      sorted.forEach(r => {
-        const trays = parseFloat(r.total_trays);
-        lines.push(`  • ${r.item_name} — ${fmt(trays)} tray${trays !== 1 ? 's' : ''}`);
-      });
-      lines.push(`  _Subtotal: ${fmt(catTotal)} tray${catTotal !== 1 ? 's' : ''}_`);
-      lines.push('');
+    const catParts = sortedCats.map(cat => {
+      const t = byCat[cat].reduce((sum, r) => sum + parseFloat(r.total_trays), 0);
+      return (CATEGORY_LABELS[cat] || cat) + ': ' + fmt(t);
     });
-
-    lines.push(`_Total shipped: ${fmt(totalTrays)} trays_`);
+    lines.push('🚚 *Shipped: ' + fmt(totalTrays) + ' trays*');
+    catParts.forEach(p => lines.push('  • ' + p));
+    lines.push('_Full tray breakdown in thread_ 🧵');
   } else {
     lines.push('_No shipments recorded for this date_');
   }
@@ -223,7 +243,7 @@ function buildMessage(locationName, dateLabel, scans, preorders) {
       const timeStr = order.pickup_time ? ` · ${order.pickup_time}` : '';
       const sourceMap = { 'pickup': 'Shopify Preorder', 'Square Pickup': 'Square Preorder' };
       const source = sourceMap[order.checkout_method] || order.checkout_method || 'Preorder';
-      lines.push(`*Order #${order.order_number} — ${order.customer}${timeStr}*`);
+      lines.push(`*Order #${order.order_number} — ${order.customer || 'No name on order'}${timeStr}*`);
       lines.push(`  _Source: ${source}_`);
       order.items.forEach(item => {
         lines.push(`  • ${item.title} — ${item.qty}`);
@@ -239,18 +259,46 @@ function buildMessage(locationName, dateLabel, scans, preorders) {
   return lines.join('\n');
 }
 
+// ── Thread detail builder ─────────────────────────────────────────────────────
+function buildTrayDetail(scans) {
+  if (!scans.length) return null;
+  const lines = ['*Tray Breakdown*', ''];
+  const byCat = {};
+  scans.forEach(r => {
+    const cat = r.category || 'Other';
+    if (!byCat[cat]) byCat[cat] = [];
+    byCat[cat].push(r);
+  });
+  const sortedCats = Object.keys(byCat).sort((a, b) => categoryPriority(a) - categoryPriority(b));
+  sortedCats.forEach(cat => {
+    const sorted = byCat[cat].sort((a, b) => parseFloat(b.total_trays) - parseFloat(a.total_trays));
+    const catTotal = sorted.reduce((sum, r) => sum + parseFloat(r.total_trays), 0);
+    lines.push('*' + (CATEGORY_LABELS[cat] || cat) + '*');
+    sorted.forEach(r => {
+      const trays = parseFloat(r.total_trays);
+      lines.push('  • ' + r.item_name + ' — ' + fmt(trays) + ' tray' + (trays !== 1 ? 's' : ''));
+    });
+    lines.push('  _Subtotal: ' + fmt(catTotal) + '_');
+    lines.push('');
+  });
+  const total = scans.reduce((sum, r) => sum + parseFloat(r.total_trays), 0);
+  lines.push('_Total shipped: ' + fmt(total) + ' trays_');
+  return lines.join('\n');
+}
+
 // ── Slack ─────────────────────────────────────────────────────────────────────
-async function postToSlack(token, channel, text) {
+async function postToSlack(token, channel, text, thread_ts) {
   const res = await fetch('https://slack.com/api/chat.postMessage', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-    body: JSON.stringify({ channel: '#' + channel, text, mrkdwn: true }),
+    body: JSON.stringify(Object.assign({ channel: '#' + channel, text, mrkdwn: true }, thread_ts ? { thread_ts } : {})),
   });
   const json = await res.json();
   if (!json.ok) {
     const hint = json.error === 'channel_not_found' ? ` (run /invite @FDB Daily Shipments in #${channel})` : '';
     throw new Error(json.error + hint);
   }
+  return json.ts;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
