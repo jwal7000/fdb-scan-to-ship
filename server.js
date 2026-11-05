@@ -13,6 +13,15 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
+// Log any request slower than 1s — freeze forensics
+app.use((req, res, next) => {
+  const t0 = Date.now();
+  res.on('finish', () => {
+    const ms = Date.now() - t0;
+    if (ms > 1000) console.warn('[slow] ' + req.method + ' ' + req.originalUrl + ' ' + ms + 'ms status=' + res.statusCode);
+  });
+  next();
+});
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Location abbreviation → full name mapping

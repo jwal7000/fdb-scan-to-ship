@@ -40,6 +40,7 @@ const LOCATIONS = [
   { displayName: 'The Factory',         scanName: 'The Factory',          shopifyName: 'The Factory',          slackChannel: 'fdb-franklin'  },
   { displayName: 'The Fountains',       scanName: 'The Fountains',        shopifyName: 'The Fountains',        slackChannel: 'fdb-fountains' },
   { displayName: 'Westside Provisions', scanName: 'Westside Provisions',  shopifyName: 'Westside Provisions',  slackChannel: 'fdb-wsp'       },
+  { displayName: 'Medley',              scanName: 'Medley',               shopifyName: 'Medley',               slackChannel: 'fdb-medley'    },
   { displayName: 'The Gulch',           scanName: 'The Gulch',            shopifyName: 'The Gulch',                   slackChannel: 'fdb-gulch'     },
 ];
 
