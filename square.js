@@ -19,7 +19,15 @@ function squareRequest(method, path, body) {
     const req = https.request({ hostname: SQUARE_HOST, path, method, headers }, res => {
       let data = '';
       res.on('data', d => data += d);
-      res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(data) }));
+      res.on('error', reject);
+      res.on('end', () => {
+        // A dropped connection can leave a truncated body — reject instead of crashing
+        try { resolve({ status: res.statusCode, body: JSON.parse(data) }); }
+        catch (e) { const err = new Error(`Square ${res.statusCode}: unreadable response`); err.code = 'ECONNRESET'; reject(err); }
+      });
+    });
+    req.setTimeout(30000, () => {
+      const err = new Error('Square request timed out after 30s'); err.code = 'ETIMEDOUT'; req.destroy(err);
     });
     req.on('error', reject);
     if (payload) req.write(payload);
